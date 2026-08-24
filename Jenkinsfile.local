@@ -1,0 +1,122 @@
+pipeline {
+  agent any
+
+  environment {
+    REGISTRY = "docker.io/yourdockerhubuser"
+    IMAGE_TAG = "${env.BUILD_NUMBER}"
+    STAGING_NS = "sportszone-staging"
+    PROD_NS = "sportszone-prod"
+    STAGING_URL = "http://staging.sportszone.internal"
+    DEPLOY = "false" // set to 'true' to enable Kubernetes deployment stages
+  }
+
+  options { timestamps(); buildDiscarder(logRotator(numToKeepStr: '20')) }
+
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+
+    stage('Unit Tests') {
+      parallel {
+        stage('team-service') {
+          steps {
+            dir('team-service') {
+              script {
+                docker.image('python:3.12').inside {
+                  sh 'pip install --upgrade pip'
+                  sh 'pip install -r requirements.txt pytest-cov'
+                  sh 'pytest --junitxml=test-results.xml'
+                }
+              }
+            }
+          }
+          post { always { junit 'team-service/test-results.xml' } }
+        }
+
+        stage('player-service') {
+          steps {
+            dir('player-service') {
+              script {
+                docker.image('python:3.12').inside {
+                  sh 'pip install --upgrade pip'
+                  sh 'pip install -r requirements.txt pytest-cov'
+                  sh 'pytest --junitxml=test-results.xml'
+                }
+              }
+            }
+          }
+          post { always { junit 'player-service/test-results.xml' } }
+        }
+
+        stage('match-service') {
+          steps {
+            dir('match-service') {
+              script {
+                docker.image('python:3.12').inside {
+                  sh 'pip install --upgrade pip'
+                  sh 'pip install -r requirements.txt pytest-cov'
+                  sh 'pytest --junitxml=test-results.xml'
+                }
+              }
+            }
+          }
+          post { always { junit 'match-service/test-results.xml' } }
+        }
+      }
+    }
+
+    stage('Code Quality Analysis (SonarQube)') {
+      steps {
+        withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+          script {
+            // Run sonar-scanner CLI in Docker and point it at the SonarQube server
+            // Configure the SonarQube server URL below to the Jenkins-side hostname
+            def sonarHost = "http://sonarqube:9000"
+            docker.image('sonarsource/sonar-scanner-cli:latest').inside {
+              sh "sonar-scanner -Dsonar.host.url=${sonarHost} -Dsonar.login=${SONAR_TOKEN}"
+            }
+          }
+        }
+      }
+    }
+
+    stage('Build Docker Images') {
+      steps {
+        script {
+          def services = ['team-service', 'player-service', 'match-service', 'web-frontend']
+          services.each { svc ->
+            sh "docker build -t ${REGISTRY}/sportszone-${svc}:${IMAGE_TAG} -t ${REGISTRY}/sportszone-${svc}:latest ./${svc}"
+          }
+        }
+      }
+    }
+
+    stage('Push Docker Images') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+          sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+          script {
+            def services = ['team-service', 'player-service', 'match-service', 'web-frontend']
+            services.each { svc ->
+              sh "docker push ${REGISTRY}/sportszone-${svc}:${IMAGE_TAG}"
+              sh "docker push ${REGISTRY}/sportszone-${svc}:latest"
+            }
+          }
+        }
+      }
+    }
+
+    stage('Deploy to Staging (SKIPPED BY DEFAULT)') {
+      when { expression { return env.DEPLOY == 'true' } }
+      steps {
+        echo 'Deploy steps run only when DEPLOY=true. Configure kubectl/AWS credentials in Jenkins if you enable this.'
+        // The original Jenkinsfile uses kubectl/AWS credentials. Keep those steps identical to the repo Jenkinsfile.
+      }
+    }
+  }
+
+  post {
+    always { sh 'docker logout || true' }
+  }
+}

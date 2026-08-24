@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.db
+instance/
+.env
+.venv/
+venv/
+.DS_Store
+.pytest_cache/
+coverage.xml
+test-results.xml
+.scannerwork/
+.sonar/
+-e 
+.coverage

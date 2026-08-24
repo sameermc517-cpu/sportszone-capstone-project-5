@@ -1,0 +1,77 @@
+version: "3.9"
+
+# Local, single-machine way to run all four SportsZone microservices
+# PLUS a real PostgreSQL database together, and verify the whole
+# platform in a browser before moving on to Kubernetes / AWS. This file
+# is provided as a LOCAL VERIFICATION AID ONLY - the actual capstone
+# deployment target is Kubernetes with a managed/self-hosted Postgres,
+# not Compose.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: sportszone
+      POSTGRES_USER: sportszone
+      POSTGRES_PASSWORD: sportszone_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - sportszone-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sportszone"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  team-service:
+    build: ./team-service
+    environment:
+      DATABASE_URL: "postgresql://sportszone:sportszone_dev_password@postgres:5432/sportszone_teams"
+    ports:
+      - "5001:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  player-service:
+    build: ./player-service
+    environment:
+      DATABASE_URL: "postgresql://sportszone:sportszone_dev_password@postgres:5432/sportszone_players"
+      TEAM_SERVICE_URL: "http://team-service:5001"
+    ports:
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      team-service:
+        condition: service_started
+
+  match-service:
+    build: ./match-service
+    environment:
+      DATABASE_URL: "postgresql://sportszone:sportszone_dev_password@postgres:5432/sportszone_matches"
+      TEAM_SERVICE_URL: "http://team-service:5001"
+    ports:
+      - "5003:5003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      team-service:
+        condition: service_started
+
+  web-frontend:
+    build: ./web-frontend
+    ports:
+      - "5000:5000"
+    environment:
+      TEAM_SERVICE_URL: "http://team-service:5001"
+      PLAYER_SERVICE_URL: "http://player-service:5002"
+      MATCH_SERVICE_URL: "http://match-service:5003"
+    depends_on:
+      - team-service
+      - player-service
+      - match-service
+
+volumes:
+  sportszone-pgdata:

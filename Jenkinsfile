@@ -1,0 +1,206 @@
+// SportsZone Capstone - End-to-End Jenkins Pipeline
+//
+// Stages: checkout -> unit tests (all 3 services) -> SonarQube code
+// quality analysis + quality gate -> build & push 4 Docker images ->
+// deploy to Kubernetes (staging namespace) -> wait for rollout ->
+// Selenium E2E tests against the live staging URL -> manual approval
+// -> promote to production namespace.
+//
+// This file expects the following to already exist, all set up in
+// earlier phases of the capstone:
+//   - A Jenkins agent with Python 3.12, Docker, kubectl, and a Chrome
+//     browser (for Selenium) installed.
+//   - Jenkins credentials configured (Manage Jenkins > Credentials):
+//       'dockerhub-creds'      - username/password for your registry
+//       'aws-creds'            - AWS access key/secret for kubectl/EKS
+//       'sonarqube-token'      - SonarQube authentication token
+//   - A SonarQube server registered in Jenkins under the name
+//     'sportszone-sonarqube' (Manage Jenkins > System > SonarQube servers).
+//   - A kubeconfig for your EKS cluster available to the agent, or
+//     configured via the AWS credentials above.
+
+pipeline {
+    agent any
+
+    environment {
+        REGISTRY        = "docker.io/yourdockerhubuser"
+        IMAGE_TAG       = "${env.BUILD_NUMBER}"
+        STAGING_NS      = "sportszone-staging"
+        PROD_NS         = "sportszone-prod"
+        STAGING_URL     = "http://staging.sportszone.internal"   // set to your ALB/Ingress URL
+    }
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Unit Tests') {
+            parallel {
+                stage('team-service') {
+                    steps {
+                        dir('team-service') {
+                            sh 'python3 -m venv .venv'
+                            sh '. .venv/bin/activate && pip install -r requirements.txt'
+                            sh '. .venv/bin/activate && pytest'
+                        }
+                    }
+                    post {
+                        always {
+                            junit 'team-service/test-results.xml'
+                        }
+                    }
+                }
+                stage('player-service') {
+                    steps {
+                        dir('player-service') {
+                            sh 'python3 -m venv .venv'
+                            sh '. .venv/bin/activate && pip install -r requirements.txt'
+                            sh '. .venv/bin/activate && pytest'
+                        }
+                    }
+                    post {
+                        always {
+                            junit 'player-service/test-results.xml'
+                        }
+                    }
+                }
+                stage('match-service') {
+                    steps {
+                        dir('match-service') {
+                            sh 'python3 -m venv .venv'
+                            sh '. .venv/bin/activate && pip install -r requirements.txt'
+                            sh '. .venv/bin/activate && pytest'
+                        }
+                    }
+                    post {
+                        always {
+                            junit 'match-service/test-results.xml'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Code Quality Analysis (SonarQube)') {
+            steps {
+                withSonarQubeEnv('sportszone-sonarqube') {
+                    sh 'sonar-scanner'
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                // Fails the build automatically if SonarQube's configured
+                // quality gate (coverage, bugs, vulnerabilities, code
+                // smells thresholds) is not met. Pipeline pauses here
+                // waiting for SonarQube's webhook callback.
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Build Docker Images') {
+            steps {
+                script {
+                    def services = ['team-service', 'player-service', 'match-service', 'web-frontend']
+                    services.each { svc ->
+                        sh "docker build -t ${REGISTRY}/sportszone-${svc}:${IMAGE_TAG} -t ${REGISTRY}/sportszone-${svc}:latest ./${svc}"
+                    }
+                }
+            }
+        }
+
+        stage('Push Docker Images') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+                    script {
+                        def services = ['team-service', 'player-service', 'match-service', 'web-frontend']
+                        services.each { svc ->
+                            sh "docker push ${REGISTRY}/sportszone-${svc}:${IMAGE_TAG}"
+                            sh "docker push ${REGISTRY}/sportszone-${svc}:latest"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Staging (Kubernetes)') {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
+                    sh "kubectl config use-context sportszone-eks"
+                    script {
+                        def services = ['team-service', 'player-service', 'match-service', 'web-frontend']
+                        services.each { svc ->
+                            sh "kubectl set image deployment/${svc} ${svc}=${REGISTRY}/sportszone-${svc}:${IMAGE_TAG} -n ${STAGING_NS}"
+                        }
+                    }
+                    sh "kubectl rollout status deployment/web-frontend -n ${STAGING_NS} --timeout=180s"
+                    sh "kubectl rollout status deployment/team-service -n ${STAGING_NS} --timeout=180s"
+                    sh "kubectl rollout status deployment/player-service -n ${STAGING_NS} --timeout=180s"
+                    sh "kubectl rollout status deployment/match-service -n ${STAGING_NS} --timeout=180s"
+                }
+            }
+        }
+
+        stage('Browser End-to-End Tests (Selenium)') {
+            steps {
+                dir('e2e-tests') {
+                    sh 'python3 -m venv .venv'
+                    sh '. .venv/bin/activate && pip install -r requirements.txt'
+                    sh ". .venv/bin/activate && BASE_URL=${STAGING_URL} pytest --junitxml=e2e-results.xml -v"
+                }
+            }
+            post {
+                always {
+                    junit 'e2e-tests/e2e-results.xml'
+                }
+            }
+        }
+
+        stage('Approval to Promote') {
+            steps {
+                // A human checks the staging URL and the test/quality
+                // results above before production receives the new build.
+                input message: "Staging looks good at ${STAGING_URL}. Promote this build to production?", ok: "Promote"
+            }
+        }
+
+        stage('Deploy to Production (Kubernetes)') {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
+                    script {
+                        def services = ['team-service', 'player-service', 'match-service', 'web-frontend']
+                        services.each { svc ->
+                            sh "kubectl set image deployment/${svc} ${svc}=${REGISTRY}/sportszone-${svc}:${IMAGE_TAG} -n ${PROD_NS}"
+                        }
+                    }
+                    sh "kubectl rollout status deployment/web-frontend -n ${PROD_NS} --timeout=180s"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline succeeded: build ${IMAGE_TAG} is live."
+        }
+        failure {
+            echo "Pipeline failed - check the stage above for details. Nothing was promoted to production."
+        }
+        always {
+            sh 'docker logout || true'
+        }
+    }
+}

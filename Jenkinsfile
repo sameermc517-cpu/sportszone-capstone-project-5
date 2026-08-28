@@ -27,7 +27,7 @@ pipeline {
         IMAGE_TAG       = "${env.BUILD_NUMBER}"
         STAGING_NS      = "sportszone-staging"
         PROD_NS         = "sportszone-prod"
-        STAGING_URL     = "http://REPLACE_WITH_YOUR_ALB_HOSTNAME"   // kubectl get svc web-frontend -n sportszone-staging
+        STAGING_URL     = "http://aa4f40202f32c43568e04d2d5bcf8774-1146275705.ca-central-1.elb.amazonaws.com"
         AWS_REGION      = "ca-central-1"
         EKS_CLUSTER     = "sportszone-cluster"
         PATH            = "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"

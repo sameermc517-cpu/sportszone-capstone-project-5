@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SportsZone Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header>
+        <h1>🏆 SportsZone Dashboard</h1>
+        <p>Teams &bull; Players &bull; Live Matches &mdash; served by 3 independent microservices</p>
+    </header>
+
+    {% if errors %}
+    <div class="banner error">
+        <strong>Some services are unreachable:</strong>
+        <ul>
+            {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+        </ul>
+        <p>This is expected while you are bringing services online one at a time during the capstone.</p>
+    </div>
+    {% endif %}
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="banner {{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <section class="grid">
+        <div class="card">
+            <h2>Teams ({{ teams|length }})</h2>
+            <table>
+                <tr><th>ID</th><th>Name</th><th>City</th><th>Sport</th></tr>
+                {% for t in teams %}
+                <tr><td>{{ t.id }}</td><td>{{ t.name }}</td><td>{{ t.city or '-' }}</td><td>{{ t.sport }}</td></tr>
+                {% endfor %}
+            </table>
+            <form method="post" action="{{ url_for('add_team') }}">
+                <input name="name" placeholder="Team name" required>
+                <input name="city" placeholder="City">
+                <input name="sport" placeholder="Sport" required>
+                <input name="founded_year" placeholder="Founded year" type="number">
+                <button type="submit">Add Team</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>Players ({{ players|length }})</h2>
+            <table>
+                <tr><th>ID</th><th>Name</th><th>Team</th><th>Position</th><th>#</th></tr>
+                {% for p in players %}
+                <tr>
+                    <td>{{ p.id }}</td><td>{{ p.name }}</td>
+                    <td>{{ team_lookup.get(p.team_id, p.team_id) }}</td>
+                    <td>{{ p.position or '-' }}</td><td>{{ p.jersey_no or '-' }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+            <form method="post" action="{{ url_for('add_player') }}">
+                <input name="name" placeholder="Player name" required>
+                <input name="position" placeholder="Position">
+                <input name="jersey_no" placeholder="Jersey #" type="number">
+                <input name="team_id" placeholder="Team ID" type="number" required>
+                <button type="submit">Add Player</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>Matches ({{ matches|length }})</h2>
+            <table>
+                <tr><th>ID</th><th>Home</th><th>Score</th><th>Away</th><th>Status</th></tr>
+                {% for m in matches %}
+                <tr>
+                    <td>{{ m.id }}</td>
+                    <td>{{ team_lookup.get(m.home_team_id, m.home_team_id) }}</td>
+                    <td>{{ m.home_score }} - {{ m.away_score }}</td>
+                    <td>{{ team_lookup.get(m.away_team_id, m.away_team_id) }}</td>
+                    <td>{{ m.status }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+            <form method="post" action="{{ url_for('add_match') }}">
+                <input name="home_team_id" placeholder="Home team ID" type="number" required>
+                <input name="away_team_id" placeholder="Away team ID" type="number" required>
+                <input name="venue" placeholder="Venue">
+                <button type="submit">Schedule Match</button>
+            </form>
+        </div>
+    </section>
+
+    <footer>
+        <p>Team Service, Player Service, and Match Service each run as an independent container / pod.</p>
+    </footer>
+</body>
+</html>

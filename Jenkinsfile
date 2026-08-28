@@ -31,6 +31,11 @@ pipeline {
         AWS_REGION      = "ca-central-1"
         EKS_CLUSTER     = "sportszone-cluster"
         PATH            = "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
+        KUBECTL         = "/usr/bin/kubectl"
+        AWS             = "/usr/bin/aws"
+        DOCKER          = "/usr/bin/docker"
+        PYTHON3         = "/usr/bin/python3"
+        SONAR           = "/usr/bin/sonar-scanner"
     }
 
     options {
@@ -51,7 +56,7 @@ pipeline {
                 stage('team-service') {
                     steps {
                         dir('team-service') {
-                            sh 'python3 -m venv .venv'
+                            sh '/usr/bin/python3 -m venv .venv'
                             sh '. .venv/bin/activate && pip install -r requirements.txt'
                             sh '. .venv/bin/activate && pytest'
                         }
@@ -65,7 +70,7 @@ pipeline {
                 stage('player-service') {
                     steps {
                         dir('player-service') {
-                            sh 'python3 -m venv .venv'
+                            sh '/usr/bin/python3 -m venv .venv'
                             sh '. .venv/bin/activate && pip install -r requirements.txt'
                             sh '. .venv/bin/activate && pytest'
                         }
@@ -79,7 +84,7 @@ pipeline {
                 stage('match-service') {
                     steps {
                         dir('match-service') {
-                            sh 'python3 -m venv .venv'
+                            sh '/usr/bin/python3 -m venv .venv'
                             sh '. .venv/bin/activate && pip install -r requirements.txt'
                             sh '. .venv/bin/activate && pytest'
                         }
@@ -96,7 +101,7 @@ pipeline {
         stage('Code Quality Analysis (SonarQube)') {
             steps {
                 withSonarQubeEnv('sportszone-sonarqube') {
-                    sh 'sonar-scanner'
+                    sh '/usr/bin/sonar-scanner'
                 }
             }
         }
@@ -118,7 +123,7 @@ pipeline {
                 script {
                     def services = ['team-service', 'player-service', 'match-service', 'web-frontend']
                     services.each { svc ->
-                        sh "docker build -t ${REGISTRY}/sportszone-${svc}:${IMAGE_TAG} -t ${REGISTRY}/sportszone-${svc}:latest ./${svc}"
+                        sh "/usr/bin/docker build -t ${REGISTRY}/sportszone-${svc}:${IMAGE_TAG} -t ${REGISTRY}/sportszone-${svc}:latest ./${svc}"
                     }
                 }
             }
@@ -127,12 +132,12 @@ pipeline {
         stage('Push Docker Images') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
-                    sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}"
+                    sh "/usr/bin/aws ecr get-login-password --region ${AWS_REGION} | /usr/bin/docker login --username AWS --password-stdin ${REGISTRY}"
                     script {
                         def services = ['team-service', 'player-service', 'match-service', 'web-frontend']
                         services.each { svc ->
-                            sh "docker push ${REGISTRY}/sportszone-${svc}:${IMAGE_TAG}"
-                            sh "docker push ${REGISTRY}/sportszone-${svc}:latest"
+                            sh "/usr/bin/docker push ${REGISTRY}/sportszone-${svc}:${IMAGE_TAG}"
+                            sh "/usr/bin/docker push ${REGISTRY}/sportszone-${svc}:latest"
                         }
                     }
                 }
@@ -142,17 +147,17 @@ pipeline {
         stage('Deploy to Staging (Kubernetes)') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
-                    sh "aws eks update-kubeconfig --name ${EKS_CLUSTER} --region ${AWS_REGION}"
+                    sh "/usr/bin/aws eks update-kubeconfig --name ${EKS_CLUSTER} --region ${AWS_REGION}"
                     script {
                         def services = ['team-service', 'player-service', 'match-service', 'web-frontend']
                         services.each { svc ->
-                            sh "kubectl set image deployment/${svc} ${svc}=${REGISTRY}/sportszone-${svc}:${IMAGE_TAG} -n ${STAGING_NS}"
+                            sh "/usr/bin/kubectl set image deployment/${svc} ${svc}=${REGISTRY}/sportszone-${svc}:${IMAGE_TAG} -n ${STAGING_NS}"
                         }
                     }
-                    sh "kubectl rollout status deployment/web-frontend -n ${STAGING_NS} --timeout=180s"
-                    sh "kubectl rollout status deployment/team-service -n ${STAGING_NS} --timeout=180s"
-                    sh "kubectl rollout status deployment/player-service -n ${STAGING_NS} --timeout=180s"
-                    sh "kubectl rollout status deployment/match-service -n ${STAGING_NS} --timeout=180s"
+                    sh "/usr/bin/kubectl rollout status deployment/web-frontend -n ${STAGING_NS} --timeout=180s"
+                    sh "/usr/bin/kubectl rollout status deployment/team-service -n ${STAGING_NS} --timeout=180s"
+                    sh "/usr/bin/kubectl rollout status deployment/player-service -n ${STAGING_NS} --timeout=180s"
+                    sh "/usr/bin/kubectl rollout status deployment/match-service -n ${STAGING_NS} --timeout=180s"
                 }
             }
         }
@@ -160,7 +165,7 @@ pipeline {
         stage('Browser End-to-End Tests (Selenium)') {
             steps {
                 dir('e2e-tests') {
-                    sh 'python3 -m venv .venv'
+                    sh '/usr/bin/python3 -m venv .venv'
                     sh '. .venv/bin/activate && pip install -r requirements.txt'
                     sh ". .venv/bin/activate && BASE_URL=${STAGING_URL} pytest --junitxml=e2e-results.xml -v"
                 }
@@ -186,10 +191,10 @@ pipeline {
                     script {
                         def services = ['team-service', 'player-service', 'match-service', 'web-frontend']
                         services.each { svc ->
-                            sh "kubectl set image deployment/${svc} ${svc}=${REGISTRY}/sportszone-${svc}:${IMAGE_TAG} -n ${PROD_NS}"
+                            sh "/usr/bin/kubectl set image deployment/${svc} ${svc}=${REGISTRY}/sportszone-${svc}:${IMAGE_TAG} -n ${PROD_NS}"
                         }
                     }
-                    sh "kubectl rollout status deployment/web-frontend -n ${PROD_NS} --timeout=180s"
+                    sh "/usr/bin/kubectl rollout status deployment/web-frontend -n ${PROD_NS} --timeout=180s"
                 }
             }
         }
@@ -203,7 +208,7 @@ pipeline {
             echo "Pipeline failed - check the stage above for details. Nothing was promoted to production."
         }
         always {
-            sh 'docker logout || true'
+            sh '/usr/bin/docker logout || true'
         }
     }
 }

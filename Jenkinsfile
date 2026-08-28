@@ -30,6 +30,7 @@ pipeline {
         STAGING_URL     = "http://REPLACE_WITH_YOUR_ALB_HOSTNAME"   // kubectl get svc web-frontend -n sportszone-staging
         AWS_REGION      = "ca-central-1"
         EKS_CLUSTER     = "sportszone-cluster"
+        PATH            = "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
     }
 
     options {

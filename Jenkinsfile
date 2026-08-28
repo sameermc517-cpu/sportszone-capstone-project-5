@@ -38,6 +38,10 @@ pipeline {
         SONAR           = "/usr/bin/sonar-scanner"
     }
 
+    parameters {
+        booleanParam(name: 'SKIP_DEPLOY', defaultValue: false, description: 'Skip Deploy to Staging and Production stages')
+    }
+
     options {
         timestamps()
         buildDiscarder(logRotator(numToKeepStr: '20'))
@@ -145,6 +149,7 @@ pipeline {
         }
 
         stage('Deploy to Staging (Kubernetes)') {
+            when { expression { return !params.SKIP_DEPLOY } }
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
                     sh "/usr/bin/aws eks update-kubeconfig --name ${EKS_CLUSTER} --region ${AWS_REGION}"
@@ -163,6 +168,7 @@ pipeline {
         }
 
         stage('Browser End-to-End Tests (Selenium)') {
+            when { expression { return !params.SKIP_DEPLOY } }
             steps {
                 dir('e2e-tests') {
                     sh '/usr/bin/python3 -m venv .venv'
@@ -178,6 +184,7 @@ pipeline {
         }
 
         stage('Approval to Promote') {
+            when { expression { return !params.SKIP_DEPLOY } }
             steps {
                 // A human checks the staging URL and the test/quality
                 // results above before production receives the new build.
@@ -186,6 +193,7 @@ pipeline {
         }
 
         stage('Deploy to Production (Kubernetes)') {
+            when { expression { return !params.SKIP_DEPLOY } }
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
                     script {
